@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+
+<html lang="en-US">
+
+<head>
+  <title>Index</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://unpkg.com/vue@3"></script>
+<style>
+* {
+  font-family: monospace;
+}
+h1, h2, h3 {
+  text-align: center;
+}
+#msg-input-div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+#msg-input-div > * {
+  display: block;
+}
+#msg-input-buttons-div > button {
+  margin: 2px;
+}
+#msgs-div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.msg-div-div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.msg-div-div > * {
+  display: block;
+}
+.msg-div-div-buttons > button {
+  margin: 2px;
+}
+</style>
+</head>
+
+<body>
+
+<div id="app">
+  <div id="login" v-if="!loggedIn">
+    <label>
+      Name:
+      <input type="text" @keyup.enter="sendMsg" v-model="name">
+    </label>
+      
+    <label>
+      Password:
+      <input
+        type="password"
+        @keyup.enter="sendMsg"
+        placeholder="Password"
+        v-model="content">
+    </label>
+    <button @click="sendMsg">Login</button>
+  </div>
+
+  <div id="main" v-else>
+    <h1>{{name}}</h1>
+    <div id="msg-input-div">
+      <div v-if="usingTextArea">
+        <textarea placeholder="Content" v-model="content"></textarea>
+      </div>
+      <div v-else>
+        <input
+        :type="(hidden) ? 'password' : 'text'"
+        placeholder="Content"
+        v-model="content"
+        >
+      </div>
+      <label>Hidden: <input type="checkbox" v-model="hidden"></label>
+      <label>Multiline: <input type="checkbox" v-model="usingTextArea"></label>
+      <div id="msg-input-buttons-div">
+        <button @click="sendMsg">Send</button>
+        <button @click="clearMsg">Clear</button>
+      </div>
+    </div>
+
+    <div id="msgs-div">
+      <hr style="width:75vw">
+      <div
+        class="msg-div"
+        v-for="msg in names.map(n => msgs.get(n)).filter((msg) => msg)">
+        <div class="msg-div-div">
+          <h3><u><b>{{msg.name}}</b></u></h3>
+          <div class="msg-div-div-buttons">
+            <button @click="clipboardContent(msg.content)">Copy</button>
+            <button style="color:red" @click="deleteMsg(name)">Delete</button>
+          </div>
+          <pre v-if="msg.hidden" style="color:red">**********</pre>
+          <pre v-else>{{msg.shownContent}}</pre>
+        </div>
+        <hr style="width:75vw">
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function newMessage(name, content, hidden=false) {
+  return {
+    "name": name,
+    "content": content,
+    "hidden": hidden,
+  };
+}
+function newDeleteMessage(name, content, hidden=false) {
+  return {
+    "name": name,
+    "delete": true,
+  };
+}
+const App = {
+  data() {
+    const url = new URL("/ws", document.location.href);
+    const ws = new WebSocket(url.toString());
+    ws.onmessage = this.onmessage;
+    ws.onerror = this.onerror;
+    ws.onclose = this.onclose;
+    return {
+      loggedIn: false,
+
+      name: "",
+      content: "",
+      hidden: false,
+      usingTextArea: false,
+
+      names: [],
+      msgs: new Map(),
+      ws: ws,
+
+      _blank: undefined
+    };
+  },
+
+  methods: {
+    clipboardContent(content) {
+      navigator.clipboard.writeText(content);
+      alert("Copied to clipboard");
+    },
+    deleteMsg(name) {
+      if (!confirm(`Delete message from ${name}?`)) {
+        return;
+      }
+      this.ws.send(JSON.stringify(newDeleteMessage(name)));
+    },
+    sendMsg() {
+      if (!this.loggedIn && (this.name.trim() == "" || this.content == "")) {
+        alert("Must have name and password");
+        return;
+      }
+      this.ws.send(JSON.stringify(
+        newMessage(this.name, this.content, this.hidden),
+      ));
+    },
+    clearMsg() {
+      this.content = "";
+      this.hidden = false;
+    },
+    onmessage(ev) {
+      let msg;
+      try {
+        msg = JSON.parse(ev.data);
+      } catch (e) {
+        console.log(`error parsing JSON: ${e}`);
+        alert(`An error occurred: ${e}`);
+        return;
+      }
+      if (msg.error) {
+        console.log(`received error from server: ${msg.error}`);
+        alert(`Error: ${msg.error}`);
+        return;
+      }
+      if (!this.loggedIn) {
+        this.loggedIn = true;
+        this.clearMsg();
+        return;
+      }
+      if (msg.delete) {
+        const other = this.msgs.get(msg.name);
+        if (other === undefined || other.timestamp > msg.timestamp) {
+          return;
+        }
+        const i = this.names.indexOf(msg.name);
+        if (i != -1) {
+          this.names.splice(i, 1);
+          this.msgs.delete(msg.name);
+        }
+        return;
+      }
+      const other = this.msgs.get(msg.name);
+      if (other !== undefined && other.timestamp > msg.timestamp) {
+        return;
+      }
+      msg.shownContent = (msg.hidden) ? "*****HIDDEN*****" : msg.content;
+      this.msgs.set(msg.name, msg);
+      if (this.names.indexOf(msg.name) == -1) {
+        this.names.push(msg.name);
+        this.names.sort();
+      }
+    },
+    onerror(ev) {
+      console.log(`error received: ${ev}`);
+      alert(`Recieved websocket error: ${ev}`);
+    },
+    onclose() {
+      console.log("websocket closed");
+      alert("Disconnected");
+    },
+    __blankMethod() {}
+  },
+};
+const app = Vue.createApp(App);
+app.mount("#app");
+</script>
+</body>
+
+</html>
