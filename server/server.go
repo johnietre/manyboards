@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -27,6 +28,8 @@ func Run() {
 		"index", "static/html/index.html",
 		"Path to index.html file",
 	)
+	cert := flag.String("cert", "", "Path to cert file")
+	key := flag.String("key", "", "Path to key file")
 	flag.Parse()
 
 	if _, err := os.Stat(indexPath); err != nil {
@@ -36,11 +39,24 @@ func Run() {
 	if password == "" {
 		log.Fatal("missing password... set using MANYBOARDS_PASSWORD")
 	}
+	if (*cert == "" && *key != "") || (*cert != "" && *key == "") {
+		log.Fatal("if using TLS, must provide both cert and key paths")
+	}
 
 	http.HandleFunc("/", homeHandler)
 	http.Handle("/ws", webs.Handler(wsHandler))
+	ln, err := net.Listen("tcp", *addr)
+	if err != nil {
+		log.Fatal("error starting listener: ", err)
+	}
+	defer ln.Close()
 	log.Print("serving on ", *addr)
-	log.Fatal(http.ListenAndServe(*addr, nil))
+	if *cert != "" {
+		err = http.ServeTLS(ln, nil, *cert, *key)
+	} else {
+		err = http.Serve(ln, nil)
+	}
+	log.Fatal("error running server: ", err)
 }
 
 func homeHandler(w http.ResponseWriter, r *http.Request) {
